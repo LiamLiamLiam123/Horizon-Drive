@@ -415,6 +415,16 @@
       <h3>MURCIÉLAGO GT EVO</h3>
       <p><span class="swatch" style="background:#16171a"></span>LB-Silhouette WORKS widebody · V12 supercar. Blistering top speed, low grip, loves to slide.</p>
     </div>
+    <div class="optionCard" id="carPicanto">
+      <div class="cardIcon">🚘</div>
+      <h3>KIA PICANTO</h3>
+      <p><span class="swatch" style="background:#d11f2b"></span>Blaze Red · Tiny city hatch. The underdog -- nimble and grippy, but it runs out of breath fast.</p>
+    </div>
+    <div class="optionCard" id="carHoldenSS">
+      <div class="cardIcon">🚗</div>
+      <h3>HOLDEN SS</h3>
+      <p><span class="swatch" style="background:#6b6e73"></span>Gunmetal Grey · V8 muscle sedan. Big power and a strong top end, but it gets loose under hard throttle.</p>
+    </div>
   </div>
 </div>
 
@@ -473,6 +483,19 @@ const carDefs = {
   murcielago: {
     maxSpeed: 80, boostMaxSpeed: 102, accel: 21, brakePower: 34,
     reverseAccel: 8, drag: 0.994, turnRate: 2.2, grip: 0.7
+  },
+  picanto: {
+    // The underdog: tiny city car. Quick off the line for its size but a low
+    // ceiling -- it simply runs out of breath far sooner than anything else
+    // on the roster. High grip and a tight turn rate make it scrappy in corners.
+    maxSpeed: 36, boostMaxSpeed: 48, accel: 12, brakePower: 24,
+    reverseAccel: 7, drag: 0.988, turnRate: 3.4, grip: 0.88
+  },
+  holdenss: {
+    // V8 muscle sedan: big power, strong top end, but heavier and looser
+    // than the WRX -- it wants to step out under hard throttle.
+    maxSpeed: 68, boostMaxSpeed: 86, accel: 18, brakePower: 28,
+    reverseAccel: 8.5, drag: 0.993, turnRate: 2.3, grip: 0.76
   }
 };
 
@@ -539,6 +562,8 @@ document.getElementById('mapPort').addEventListener('click', () => { currentMap 
 document.getElementById('carWrx').addEventListener('click', () => { currentCar = 'wrx'; launchGame(); });
 document.getElementById('carImpreza').addEventListener('click', () => { currentCar = 'impreza'; launchGame(); });
 document.getElementById('carMurcielago').addEventListener('click', () => { currentCar = 'murcielago'; launchGame(); });
+document.getElementById('carPicanto').addEventListener('click', () => { currentCar = 'picanto'; launchGame(); });
+document.getElementById('carHoldenSS').addEventListener('click', () => { currentCar = 'holdenss'; launchGame(); });
 
 document.getElementById('menuBtn').addEventListener('click', openMenuFromGame);
 
@@ -1812,64 +1837,77 @@ function buildStartGate(){
   scene.add(gate);
 }
 
-// ============================== AI TRAFFIC (decorative) ====================
+// ============================== AI RACERS ====================================
+// AI opponents are built from the same real car models the player can choose
+// (WRX, Impreza, Murcielago, Picanto, Holden SS) rather than a generic
+// placeholder shape, and their speeds are derived from each car's own
+// carDefs stats so a Murcielago AI is genuinely fast and a Picanto AI is
+// genuinely slow -- this is a racing game, so traffic actually races.
 
-// AI personalities: each affects target speed, follow distance, and how
-// aggressively they cut corners or react to the player being nearby.
+const AI_CAR_POOL = ['wrx', 'impreza', 'murcielago', 'picanto', 'holdenss'];
+
+// Personalities now only affect HOW a car drives (how close to its own limit
+// it pushes, how much it weaves/cuts corners) rather than imposing a flat
+// slow speed on every car regardless of what it actually is.
 const AI_PERSONALITIES = [
-  { name:'Cautious',  speedMul:0.62, aggression:0.15, laneOffsetRange:1.5, color:0x3f6fae },
-  { name:'Steady',    speedMul:0.78, aggression:0.35, laneOffsetRange:2.2, color:0x888888 },
-  { name:'Confident', speedMul:0.92, aggression:0.55, laneOffsetRange:3.0, color:0xeecc33 },
-  { name:'Reckless',  speedMul:1.12, aggression:0.85, laneOffsetRange:4.2, color:0xcc3344 },
-  { name:'Show-off',  speedMul:1.0,  aggression:0.65, laneOffsetRange:3.6, color:0x33cc88 }
+  { name:'Cautious',  paceMul:0.78, aggression:0.15, laneOffsetRange:1.5 },
+  { name:'Steady',    paceMul:0.88, aggression:0.35, laneOffsetRange:2.2 },
+  { name:'Confident', paceMul:0.97, aggression:0.55, laneOffsetRange:3.0 },
+  { name:'Reckless',  paceMul:1.06, aggression:0.85, laneOffsetRange:4.2 },
+  { name:'Show-off',  paceMul:1.0,  aggression:0.65, laneOffsetRange:3.6 }
 ];
+
+function buildAIRacerModel(carName){
+  const group = new THREE.Group();
+  let info;
+  if (carName === 'impreza') info = buildImprezaCar(group);
+  else if (carName === 'murcielago') info = buildMurcielagoCar(group);
+  else if (carName === 'picanto') info = buildPicantoCar(group);
+  else if (carName === 'holdenss') info = buildHoldenSSCar(group);
+  else info = buildWrxCar(group);
+
+  const wheelY = info.lowRide ? 0.32 : (info.smallWheels ? 0.36 : 0.45);
+  const wheelScale = info.smallWheels ? 0.82 : 1;
+  [[-info.trackX,info.frontZ],[info.trackX,info.frontZ],[-info.trackX,info.rearZ],[info.trackX,info.rearZ]].forEach(([x,z])=>{
+    const w = makeWheel(info.wheelColor, info.caliperColor, wheelScale);
+    w.position.set(x, wheelY, z);
+    group.add(w);
+  });
+
+  if (info.scale && info.scale !== 1){
+    group.scale.setScalar(info.scale);
+  }
+  return { group, info };
+}
 
 function buildAITraffic(){
   if (!roadCurve) return;
   const count = (currentMap === 'city' || currentMap === 'port') ? 5 : 6;
   for (let i=0;i<count;i++){
     const t0 = i/count;
+    const carName = AI_CAR_POOL[i % AI_CAR_POOL.length];
     const persona = AI_PERSONALITIES[i % AI_PERSONALITIES.length];
-    const carModel = buildSimpleCar(persona.color);
-    scene.add(carModel.group);
+    const def = carDefs[carName];
+    const built = buildAIRacerModel(carName);
+    scene.add(built.group);
     const p0 = roadCurve.getPointAt(t0);
     const tan0 = roadCurve.getTangentAt(Math.min(t0,0.9999)).normalize();
     aiCars.push({
-      group: carModel.group,
+      group: built.group,
       persona,
+      carName,
+      maxSpeed: def.maxSpeed,
+      boostMaxSpeed: def.boostMaxSpeed,
       pos: new THREE.Vector3(p0.x, p0.y, p0.z),
       heading: Math.atan2(tan0.x, tan0.z),
-      speed: 8 * persona.speedMul,
+      speed: def.maxSpeed * 0.4,
       t: t0,
       laneOffset: (Math.random()-0.5) * persona.laneOffsetRange,
-      r: 1.4,
+      r: 1.5,
       spinOutTimer: 0,
       stunTimer: 0
     });
   }
-}
-
-function buildSimpleCar(color){
-  const group = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color, metalness:0.5, roughness:0.35 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9,0.7,4.2), bodyMat);
-  body.position.y = 0.55;
-  body.castShadow = true;
-  group.add(body);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5,0.55,2.0), new THREE.MeshStandardMaterial({color:0x101418, metalness:0.6, roughness:0.2}));
-  cabin.position.set(0,1.0,-0.2);
-  group.add(cabin);
-  const wheelMat = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.9 });
-  const wheels = [];
-  [[-0.95,0.35,1.35],[0.95,0.35,1.35],[-0.95,0.35,-1.35],[0.95,0.35,-1.35]].forEach(pos=>{
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.38,0.38,0.32,12), wheelMat);
-    w.rotation.z = Math.PI/2;
-    w.position.set(pos[0],pos[1],pos[2]);
-    w.castShadow = true;
-    group.add(w);
-    wheels.push(w);
-  });
-  return { group, wheels };
 }
 
 function updateAITraffic(dt){
@@ -1888,8 +1926,15 @@ function updateAITraffic(dt){
       if (ai.t > 1) ai.t -= 1;
       if (ai.t < 0) ai.t += 1;
 
-      const targetSpeed = 9 * ai.persona.speedMul + Math.sin(performance.now()*0.0003 + ai.t*10) * ai.persona.aggression * 2;
-      ai.speed = THREE.MathUtils.lerp(ai.speed, Math.max(2, targetSpeed), 0.02);
+      // Race pace: each AI pushes toward a real fraction of its own car's
+      // top speed (occasionally tipping into its boost range), modulated by
+      // personality pace and a bit of per-lap variation so the pack doesn't
+      // move in lockstep.
+      const variation = Math.sin(performance.now()*0.0003 + ai.t*10) * ai.persona.aggression * 0.08;
+      const paceTarget = ai.maxSpeed * (ai.persona.paceMul + variation);
+      const ceiling = ai.boostMaxSpeed * 0.96;
+      const targetSpeed = Math.min(paceTarget, ceiling);
+      ai.speed = THREE.MathUtils.lerp(ai.speed, Math.max(ai.maxSpeed*0.3, targetSpeed), 0.015);
 
       const p = roadCurve.getPointAt(ai.t);
       const tan = roadCurve.getTangentAt(Math.min(ai.t,0.9999)).normalize();
@@ -2459,31 +2504,232 @@ function buildMurcielagoCar(group){
   return { wheelColor:0x1a1a1c, caliperColor:0xb01821, frontZ:1.62, rearZ:-1.6, trackX:1.18, lowRide:true };
 }
 
-function makeWheel(wheelColor, caliperColor){
+function buildPicantoCar(group){
+  // Kia Picanto: tiny city hatch. Short overhangs front and rear, a tall
+  // stubby cabin relative to its length, simple rounded-but-plain panels,
+  // small wheels tucked close to the body. The underdog of the roster --
+  // not built for racing, but cheerful and nimble.
+  const bodyMat = new THREE.MeshStandardMaterial({ color:0xd11f2b, metalness:0.3, roughness:0.25 });
+  const darkAccentMat = new THREE.MeshStandardMaterial({ color:0x16171a, metalness:0.4, roughness:0.4 });
+  const glassMat = new THREE.MeshStandardMaterial({ color:0x1b232c, metalness:0.4, roughness:0.08, transparent:true, opacity:0.82 });
+  const chromeMat = new THREE.MeshStandardMaterial({ color:0xcfcfcf, metalness:0.6, roughness:0.3 });
+
+  // Short, compact lower body
+  const lower = new THREE.Mesh(roundedBox(1.62, 0.46, 3.25, 0.26, 4), bodyMat);
+  lower.position.y = 0.4;
+  lower.castShadow = true;
+  group.add(lower);
+
+  // Short, stubby hood (city cars have very little front overhang)
+  const hood = new THREE.Mesh(roundedBox(1.5, 0.22, 0.7, 0.28, 4), bodyMat);
+  hood.position.set(0, 0.66, 1.32);
+  hood.castShadow = true;
+  group.add(hood);
+
+  // Tall cabin relative to body length - the Picanto's defining proportion
+  const cabin = new THREE.Mesh(roundedBox(1.5, 0.62, 2.1, 0.32, 5), bodyMat);
+  cabin.position.set(0, 0.86, -0.15);
+  cabin.castShadow = true;
+  group.add(cabin);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.4, 0.08), glassMat);
+  windshield.position.set(0, 0.92, 0.78);
+  windshield.rotation.x = -0.5;
+  group.add(windshield);
+
+  const sideGlassGeo = new THREE.BoxGeometry(0.05,0.32,1.6);
+  const sideGlassL = new THREE.Mesh(sideGlassGeo, glassMat);
+  sideGlassL.position.set(0.74, 0.94, -0.1);
+  group.add(sideGlassL);
+  const sideGlassR = sideGlassL.clone();
+  sideGlassR.position.x = -0.74;
+  group.add(sideGlassR);
+
+  // Steep, short hatch rear glass
+  const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.46, 0.08), glassMat);
+  rearGlass.position.set(0, 0.84, -1.18);
+  rearGlass.rotation.x = 0.55;
+  group.add(rearGlass);
+
+  // Very short hatch tail - almost no rear overhang
+  const tail = new THREE.Mesh(roundedBox(1.5, 0.3, 0.35, 0.2, 3), bodyMat);
+  tail.position.set(0, 0.52, -1.55);
+  tail.castShadow = true;
+  group.add(tail);
+
+  // Friendly, rounded front bumper with a simple small grille
+  const bumper = new THREE.Mesh(roundedBox(1.64, 0.34, 0.3, 0.35, 5), bodyMat);
+  bumper.position.set(0, 0.34, 1.6);
+  group.add(bumper);
+
+  const grille = new THREE.Mesh(roundedBox(0.5,0.18,0.08,0.06,3), darkAccentMat);
+  grille.position.set(0, 0.4, 1.74);
+  group.add(grille);
+
+  const rearBumper = new THREE.Mesh(roundedBox(1.64, 0.32, 0.26, 0.32, 5), bodyMat);
+  rearBumper.position.set(0, 0.32, -1.7);
+  group.add(rearBumper);
+
+  [-0.82, 0.82].forEach(x=>{
+    const mirror = new THREE.Mesh(roundedBox(0.08,0.09,0.16,0.03,2), darkAccentMat);
+    mirror.position.set(x, 0.86, 0.7);
+    group.add(mirror);
+  });
+
+  const headlightMat = new THREE.MeshStandardMaterial({ color:0xfff7d6, emissive:0xfff2a8, emissiveIntensity:0.75 });
+  [-0.6,0.6].forEach(x=>{
+    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8), headlightMat);
+    hl.scale.set(1.2,0.8,0.6);
+    hl.position.set(x,0.42,1.66);
+    group.add(hl);
+  });
+
+  const tailMat = new THREE.MeshStandardMaterial({ color:0xff3030, emissive:0xff2020, emissiveIntensity:0.55 });
+  [-0.68,0.68].forEach(x=>{
+    const tl = new THREE.Mesh(new THREE.SphereGeometry(0.12,10,8), tailMat);
+    tl.scale.set(1.1,0.9,0.5);
+    tl.position.set(x,0.46,-1.72);
+    group.add(tl);
+  });
+
+  return { wheelColor:0xd8d8d8, caliperColor:0x888888, frontZ:1.1, rearZ:-1.1, trackX:0.82, smallWheels:true };
+}
+
+function buildHoldenSSCar(group){
+  // Holden Commodore SS: big, broad-shouldered Aussie V8 muscle sedan. Long
+  // bonnet, wide rear haunches, factory-subtle bodykit, dual exhaust. Built
+  // in a deep gunmetal grey.
+  const bodyMat = new THREE.MeshStandardMaterial({ color:0x6b6e73, metalness:0.45, roughness:0.22 });
+  const darkAccentMat = new THREE.MeshStandardMaterial({ color:0x14161a, metalness:0.5, roughness:0.35 });
+  const glassMat = new THREE.MeshStandardMaterial({ color:0x1b232c, metalness:0.4, roughness:0.08, transparent:true, opacity:0.82 });
+  const chromeMat = new THREE.MeshStandardMaterial({ color:0xe6e6e6, metalness:0.85, roughness:0.18 });
+
+  // Long, wide lower body - bigger than the WRX/Impreza, true muscle-sedan scale
+  const lower = new THREE.Mesh(roundedBox(2.0, 0.54, 5.0, 0.24, 4), bodyMat);
+  lower.position.y = 0.44;
+  lower.castShadow = true;
+  group.add(lower);
+
+  // Long bonnet (V8 sedans run a long front end)
+  const hood = new THREE.Mesh(roundedBox(1.86, 0.3, 2.0, 0.3, 5), bodyMat);
+  hood.position.set(0, 0.78, 1.95);
+  hood.castShadow = true;
+  group.add(hood);
+
+  // Subtle hood bulge
+  const bulge = new THREE.Mesh(roundedBox(0.7, 0.08, 1.4, 0.2, 3), bodyMat);
+  bulge.position.set(0, 0.95, 2.1);
+  group.add(bulge);
+
+  const cabin = new THREE.Mesh(roundedBox(1.68, 0.5, 2.2, 0.3, 5), bodyMat);
+  cabin.position.set(0, 1.02, -0.3);
+  cabin.castShadow = true;
+  group.add(cabin);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.46, 0.08), glassMat);
+  windshield.position.set(0, 1.06, 0.85);
+  windshield.rotation.x = -0.4;
+  group.add(windshield);
+
+  const sideGlassGeo = new THREE.BoxGeometry(0.05,0.32,1.7);
+  const sideGlassL = new THREE.Mesh(sideGlassGeo, glassMat);
+  sideGlassL.position.set(0.83, 1.12, -0.35);
+  group.add(sideGlassL);
+  const sideGlassR = sideGlassL.clone();
+  sideGlassR.position.x = -0.83;
+  group.add(sideGlassR);
+
+  const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.42, 0.08), glassMat);
+  rearGlass.position.set(0, 1.04, -1.4);
+  rearGlass.rotation.x = 0.32;
+  group.add(rearGlass);
+
+  // Broad trunk deck with wide rear haunches
+  const trunk = new THREE.Mesh(roundedBox(1.96, 0.4, 1.3, 0.24, 4), bodyMat);
+  trunk.position.set(0, 0.7, -2.3);
+  trunk.castShadow = true;
+  group.add(trunk);
+
+  // Subtle factory lip spoiler
+  const lip = new THREE.Mesh(roundedBox(1.7, 0.06, 0.3, 0.05, 2), darkAccentMat);
+  lip.position.set(0, 0.92, -2.85);
+  group.add(lip);
+
+  // Front bumper with lower air intakes (SS-style)
+  const bumper = new THREE.Mesh(roundedBox(2.0, 0.4, 0.4, 0.32, 5), bodyMat);
+  bumper.position.set(0, 0.4, 2.55);
+  group.add(bumper);
+
+  const grille = new THREE.Mesh(roundedBox(0.9,0.22,0.1,0.06,3), darkAccentMat);
+  grille.position.set(0, 0.52, 2.74);
+  group.add(grille);
+
+  [-0.65, 0.65].forEach(x=>{
+    const intake = new THREE.Mesh(roundedBox(0.4,0.16,0.1,0.04,2), darkAccentMat);
+    intake.position.set(x, 0.28, 2.72);
+    group.add(intake);
+  });
+
+  const rearBumper = new THREE.Mesh(roundedBox(2.0, 0.38, 0.34, 0.3, 5), bodyMat);
+  rearBumper.position.set(0, 0.38, -2.85);
+  group.add(rearBumper);
+
+  // Dual exhaust (V8 signature)
+  [-0.5, 0.5].forEach(x=>{
+    const ex = new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,0.22,12), chromeMat);
+    ex.rotation.x = Math.PI/2;
+    ex.position.set(x, 0.2, -3.0);
+    group.add(ex);
+  });
+
+  [-0.96, 0.96].forEach(x=>{
+    const mirror = new THREE.Mesh(roundedBox(0.1,0.12,0.22,0.04,2), darkAccentMat);
+    mirror.position.set(x, 1.0, 1.1);
+    group.add(mirror);
+  });
+
+  const headlightMat = new THREE.MeshStandardMaterial({ color:0xfff7d6, emissive:0xfff2a8, emissiveIntensity:0.85 });
+  [-0.74,0.74].forEach(x=>{
+    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.16,10,8), headlightMat);
+    hl.scale.set(1.4,0.7,0.6);
+    hl.position.set(x,0.62,2.62);
+    group.add(hl);
+  });
+
+  const tailMat = new THREE.MeshStandardMaterial({ color:0xff3030, emissive:0xff2020, emissiveIntensity:0.65 });
+  const tailBar = new THREE.Mesh(new THREE.BoxGeometry(1.6,0.1,0.06), tailMat);
+  tailBar.position.set(0, 0.68, -2.98);
+  group.add(tailBar);
+
+  return { wheelColor:0x4a4c50, caliperColor:0xc41e1e, frontZ:1.7, rearZ:-1.8, trackX:1.08 };
+}
+
+function makeWheel(wheelColor, caliperColor, sizeScale){
+  const scale = sizeScale || 1;
   const tireMat = new THREE.MeshStandardMaterial({ color:0x0c0c0c, roughness:0.9 });
   const rimMat = new THREE.MeshStandardMaterial({ color:wheelColor, metalness:0.75, roughness:0.35 });
   const caliperMat = new THREE.MeshStandardMaterial({ color:caliperColor, metalness:0.6, roughness:0.3 });
 
   const g = new THREE.Group();
-  const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.43,0.43,0.32,20), tireMat);
+  const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.43*scale,0.43*scale,0.32*scale,20), tireMat);
   tire.rotation.z = Math.PI/2;
   tire.castShadow = true;
   g.add(tire);
 
-  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.27,0.27,0.34,6), rimMat);
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.27*scale,0.27*scale,0.34*scale,6), rimMat);
   rim.rotation.z = Math.PI/2;
   g.add(rim);
 
   for (let i=0;i<5;i++){
-    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.34,0.07,0.06), rimMat);
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.34*scale,0.07*scale,0.06*scale), rimMat);
     const ang = (i/5)*Math.PI*2;
-    spoke.position.set(Math.cos(ang)*0.13, Math.sin(ang)*0.13, 0);
+    spoke.position.set(Math.cos(ang)*0.13*scale, Math.sin(ang)*0.13*scale, 0);
     spoke.rotation.x = ang;
     g.add(spoke);
   }
 
-  const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.22,0.3), caliperMat);
-  caliper.position.set(0.12, 0.08, 0);
+  const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.1*scale,0.22*scale,0.3*scale), caliperMat);
+  caliper.position.set(0.12*scale, 0.08*scale, 0);
   g.add(caliper);
 
   return g;
@@ -2498,18 +2744,21 @@ function rebuildCar(carName){
   let info;
   if (carName === 'impreza') info = buildImprezaCar(carGroup);
   else if (carName === 'murcielago') info = buildMurcielagoCar(carGroup);
+  else if (carName === 'picanto') info = buildPicantoCar(carGroup);
+  else if (carName === 'holdenss') info = buildHoldenSSCar(carGroup);
   else info = buildWrxCar(carGroup);
 
-  const wheelY = info.lowRide ? 0.32 : 0.45;
-  wheelFL = makeWheel(info.wheelColor, info.caliperColor); wheelFL.position.set(-info.trackX, wheelY, info.frontZ);
-  wheelFR = makeWheel(info.wheelColor, info.caliperColor); wheelFR.position.set(info.trackX, wheelY, info.frontZ);
-  wheelRL = makeWheel(info.wheelColor, info.caliperColor); wheelRL.position.set(-info.trackX, wheelY, info.rearZ);
-  wheelRR = makeWheel(info.wheelColor, info.caliperColor); wheelRR.position.set(info.trackX, wheelY, info.rearZ);
+  const wheelY = info.lowRide ? 0.32 : (info.smallWheels ? 0.36 : 0.45);
+  const wheelScale = info.smallWheels ? 0.82 : 1;
+  wheelFL = makeWheel(info.wheelColor, info.caliperColor, wheelScale); wheelFL.position.set(-info.trackX, wheelY, info.frontZ);
+  wheelFR = makeWheel(info.wheelColor, info.caliperColor, wheelScale); wheelFR.position.set(info.trackX, wheelY, info.frontZ);
+  wheelRL = makeWheel(info.wheelColor, info.caliperColor, wheelScale); wheelRL.position.set(-info.trackX, wheelY, info.rearZ);
+  wheelRR = makeWheel(info.wheelColor, info.caliperColor, wheelScale); wheelRR.position.set(info.trackX, wheelY, info.rearZ);
   [wheelFL,wheelFR,wheelRL,wheelRR].forEach(w=>carGroup.add(w));
 
   const archMat = new THREE.MeshStandardMaterial({ color:0x121316, metalness:0.5, roughness:0.4 });
   [[-info.trackX,info.frontZ],[info.trackX,info.frontZ],[-info.trackX,info.rearZ],[info.trackX,info.rearZ]].forEach(([x,z])=>{
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.5,0.06,6,12,Math.PI), archMat);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.5*wheelScale,0.06*wheelScale,6,12,Math.PI), archMat);
     arch.position.set(x, wheelY+0.1, z);
     arch.rotation.y = Math.PI/2;
     arch.rotation.z = Math.PI;
