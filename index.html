@@ -1883,29 +1883,43 @@ function buildAIRacerModel(carName){
 function buildAITraffic(){
   if (!roadCurve) return;
   const count = (currentMap === 'city' || currentMap === 'port') ? 5 : 6;
+  const roadLen = currentMap === 'city' || currentMap === 'port' ? (CITY_GRID_N*CITY_BLOCK*4) : 1900;
   for (let i=0;i<count;i++){
-    const t0 = i/count;
+    // Slot 0 is reserved for the player (pole position), so AI cars fill
+    // slots 1..count in the staggered grid behind the line.
+    const slotIndex = i + 1;
+    const slot = getStartingGridSlot(slotIndex);
     const carName = AI_CAR_POOL[i % AI_CAR_POOL.length];
     const persona = AI_PERSONALITIES[i % AI_PERSONALITIES.length];
     const def = carDefs[carName];
     const built = buildAIRacerModel(carName);
     scene.add(built.group);
-    const p0 = roadCurve.getPointAt(t0);
-    const tan0 = roadCurve.getTangentAt(Math.min(t0,0.9999)).normalize();
+
+    // Approximate this slot's row distance behind the line as a negative
+    // curve-parameter offset, so when the AI starts following the road
+    // curve it resumes from roughly where its grid slot actually sits
+    // instead of snapping forward to t=0.
+    const row = Math.ceil(slotIndex / 2);
+    const startT = -(row * GRID_ROW_SPACING) / roadLen;
+
     aiCars.push({
       group: built.group,
       persona,
       carName,
       maxSpeed: def.maxSpeed,
       boostMaxSpeed: def.boostMaxSpeed,
-      pos: new THREE.Vector3(p0.x, p0.y, p0.z),
-      heading: Math.atan2(tan0.x, tan0.z),
-      speed: def.maxSpeed * 0.4,
-      t: t0,
-      laneOffset: (Math.random()-0.5) * persona.laneOffsetRange,
+      pos: slot.pos.clone(),
+      heading: slot.heading,
+      speed: 0,
+      t: startT,
+      // Start each AI's lane wander centered on its actual grid lane so it
+      // eases out of formation rather than snapping sideways on the first
+      // update tick.
+      laneOffset: ((i % 2 === 0) ? -1 : 1) * GRID_LANE_OFFSET * 0.6,
       r: 1.5,
       spinOutTimer: 0,
-      stunTimer: 0
+      stunTimer: 0,
+      gridHoldTimer: 0.8 + Math.random()*0.4 // brief pause before peeling off the line
     });
   }
 }
@@ -1917,14 +1931,23 @@ function updateAITraffic(dt){
       ai.stunTimer -= dt;
       ai.speed *= Math.pow(0.9, dt*60);
       ai.heading += ai.spinOutTimer * dt * 3; // keep spinning while stunned
+    } else if (ai.gridHoldTimer > 0){
+      // Hold exactly in the assigned starting-grid slot (set at spawn time)
+      // for a brief moment before joining the road-following logic, so the
+      // grid actually reads as a grid for a beat rather than everyone
+      // snapping onto the centerline the instant the race starts.
+      ai.gridHoldTimer -= dt;
     } else {
       // Advance along the road curve param based on current speed, then
       // resolve actual position/heading from there with a lane offset that
       // wanders slightly based on personality (aggression -> more weaving).
       const roadLen = currentMap === 'city' || currentMap === 'port' ? (CITY_GRID_N*CITY_BLOCK*4) : 1900;
       ai.t += (ai.speed * dt) / roadLen;
-      if (ai.t > 1) ai.t -= 1;
-      if (ai.t < 0) ai.t += 1;
+      // Normal lap wraparound. The road is a closed loop, so a small
+      // negative t (used to seed row 2+ grid cars just behind the line at
+      // spawn) correctly wraps to just-under-1, i.e. just before the start
+      // line -- exactly where it should be.
+      ai.t = wrapT(ai.t);
 
       // Race pace: each AI pushes toward a real fraction of its own car's
       // top speed (occasionally tipping into its boost range), modulated by
@@ -1936,10 +1959,17 @@ function updateAITraffic(dt){
       const targetSpeed = Math.min(paceTarget, ceiling);
       ai.speed = THREE.MathUtils.lerp(ai.speed, Math.max(ai.maxSpeed*0.3, targetSpeed), 0.015);
 
-      const p = roadCurve.getPointAt(ai.t);
-      const tan = roadCurve.getTangentAt(Math.min(ai.t,0.9999)).normalize();
+      const p = roadCurve.getPointAt(wrapT(ai.t));
+      const tan = roadCurve.getTangentAt(wrapT(Math.min(ai.t,0.9999))).normalize();
       const side = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0,1,0)).normalize();
       const wander = Math.sin(performance.now()*0.0006 + ai.t*20) * ai.persona.aggression * 0.6;
+      // Ease the lane offset from its starting-grid lane toward its normal
+      // wander range over the first few seconds off the line, instead of
+      // snapping straight to a wide wander radius the instant the hold ends.
+      ai.settleElapsed = (ai.settleElapsed || 0) + dt;
+      const settleProgress = THREE.MathUtils.clamp(ai.settleElapsed / 4, 0, 1);
+      const targetLane = (ai.laneOffset < 0 ? -1 : 1) * THREE.MathUtils.lerp(GRID_LANE_OFFSET*0.6, ai.persona.laneOffsetRange*0.5, settleProgress);
+      ai.laneOffset = THREE.MathUtils.lerp(ai.laneOffset, targetLane, 0.04);
       const offset = side.clone().multiplyScalar(ai.laneOffset + wander);
       ai.pos.set(p.x+offset.x, p.y, p.z+offset.z);
       ai.heading = Math.atan2(tan.x, tan.z);
@@ -1948,6 +1978,7 @@ function updateAITraffic(dt){
     ai.group.position.copy(ai.pos);
     ai.group.rotation.y = ai.heading;
   });
+
 
   resolveAICollisions(dt);
 }
@@ -2804,17 +2835,57 @@ function rebuildCar(carName){
 
 // ============================== SPAWN ==========================================
 
+// ============================== STARTING GRID =================================
+// Both the player and every AI car spawn in a proper staggered starting grid
+// at the start/finish line, rather than scattered around the loop or stacked
+// on the same point. Row 0 (pole) sits exactly on the line; each later row is
+// offset backward along the road's tangent direction by a fixed real-world
+// distance, alternating left/right of center so nobody overlaps.
+const GRID_ROW_SPACING = 6.5;   // distance behind the line per row
+const GRID_LANE_OFFSET = 3.0;   // distance left/right of the centerline
+
+function getStartingGridSlot(slotIndex){
+  // slotIndex 0 = pole position (player). 1,2,3... fill back in a 2-wide grid.
+  const p0 = roadCurve.getPointAt(0);
+  const tan0 = roadCurve.getTangentAt(0).normalize();
+  const heading = Math.atan2(tan0.x, tan0.z);
+  const side = new THREE.Vector3().crossVectors(tan0, new THREE.Vector3(0,1,0)).normalize();
+
+  const row = Math.ceil(slotIndex / 2);
+  const isLeft = slotIndex % 2 === 1;
+  const laneSign = slotIndex === 0 ? 0 : (isLeft ? -1 : 1);
+
+  const back = tan0.clone().multiplyScalar(-row * GRID_ROW_SPACING);
+  const lane = side.clone().multiplyScalar(laneSign * GRID_LANE_OFFSET);
+  const pos = p0.clone().add(back).add(lane);
+  pos.y = groundHeightAt(pos.x, pos.z);
+
+  return { pos, heading };
+}
+
 function spawnPlayerOnRoad(isManualReset){
   if (!roadCurve){ return; }
-  // Always snap to t=0 on a fresh launch so the player starts ON the road,
-  // facing the direction of travel - this also doubles as the manual reset (R key).
-  const t = isManualReset ? closestPointOnRoad(vehicle.pos.x, vehicle.pos.z) : 0;
-  const p = roadCurve.getPointAt(t);
-  const tan = roadCurve.getTangentAt(Math.min(t,0.9999)).normalize();
+
+  let pos, heading;
+  if (isManualReset){
+    // Manual reset (R key) snaps to the nearest point on the road from
+    // wherever the player currently is, not back to the start line.
+    const t = closestPointOnRoad(vehicle.pos.x, vehicle.pos.z);
+    const p = roadCurve.getPointAt(t);
+    const tan = roadCurve.getTangentAt(Math.min(t,0.9999)).normalize();
+    pos = p;
+    heading = Math.atan2(tan.x, tan.z);
+  } else {
+    // Fresh launch: player always takes pole position (slot 0) on the
+    // starting grid, exactly on the line.
+    const slot = getStartingGridSlot(0);
+    pos = slot.pos;
+    heading = slot.heading;
+  }
 
   // Lift slightly above the road surface so the car never spawns clipped into asphalt
-  vehicle.pos.set(p.x, p.y + 0.4, p.z);
-  vehicle.heading = Math.atan2(tan.x, tan.z);
+  vehicle.pos.set(pos.x, pos.y + 0.4, pos.z);
+  vehicle.heading = heading;
   vehicle.speed = 0;
   vehicle.vy = 0;
   vehicle.steerAngle = 0;
@@ -2843,6 +2914,13 @@ function getInput(){
 
 function groundHeightAt(x,z){
   return terrainHeight(x,z);
+}
+
+function wrapT(t){
+  // Three.js Curve.getPointAt/getTangentAt expect u in [0,1]; values outside
+  // that range aren't guaranteed to behave sanely (their arc-length lookup
+  // table only covers [0,1]). Always normalize before calling into the curve.
+  return ((t % 1) + 1) % 1;
 }
 
 function shortestAngleDiff(a, b){
