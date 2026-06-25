@@ -219,6 +219,35 @@
     margin-right:6px; vertical-align:middle; border:1px solid rgba(255,255,255,0.4);
   }
 
+  #resultsList{
+    width:100%; max-width:480px; max-height:50vh; overflow-y:auto;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .resultRow{
+    display:flex; align-items:center; gap:16px;
+    background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+    border-radius:10px; padding:12px 18px; text-align:left;
+  }
+  .resultRow.isWinner{
+    border-color:var(--hz-orange); background:rgba(255,106,26,0.1);
+  }
+  .resultRow.isPlayer{
+    border-color:var(--hz-cyan); box-shadow:0 0 0 1px rgba(33,230,230,0.3) inset;
+  }
+  .resultPlace{
+    font-size:20px; font-weight:900; color:var(--hz-orange); width:44px; text-align:center;
+    flex-shrink:0;
+  }
+  .resultRow.isWinner .resultPlace{ color:#ffd23f; }
+  .resultInfo{ flex:1; }
+  .resultName{ font-size:15px; font-weight:700; color:var(--hz-white); letter-spacing:0.5px; }
+  .youTag{ font-size:12px; font-weight:600; color:var(--hz-cyan); letter-spacing:0.5px; }
+  .resultStatus{
+    font-size:11px; font-weight:900; letter-spacing:1.5px; color:var(--hz-mist);
+    flex-shrink:0; white-space:nowrap;
+  }
+  .resultRow.isWinner .resultStatus{ color:#ffd23f; }
+
   #controlsGrid{
     display:flex; gap:34px; color:var(--hz-mist); font-size:13px; letter-spacing:1px;
     margin-top:8px;
@@ -408,7 +437,7 @@
     <div class="optionCard" id="carImpreza">
       <div class="cardIcon">🚙</div>
       <h3>IMPREZA</h3>
-      <p><span class="swatch" style="background:#c41e1e"></span>Lightning Red · Everyday AWD hatch. Softer, more forgiving, easy to drift.</p>
+      <p><span class="swatch" style="background:#c41e1e"></span>Lightning Red · Everyday AWD hatch. Softer, more forgiving, easy to drift... and somehow does 1000 km/h.</p>
     </div>
     <div class="optionCard" id="carMurcielago">
       <div class="cardIcon">🏎️</div>
@@ -425,6 +454,22 @@
       <h3>HOLDEN SS</h3>
       <p><span class="swatch" style="background:#6b6e73"></span>Gunmetal Grey · V8 muscle sedan. Big power and a strong top end, but it gets loose under hard throttle.</p>
     </div>
+    <div class="optionCard" id="carPorscheCayman">
+      <div class="cardIcon">🚘</div>
+      <h3>PORSCHE 718 CAYMAN</h3>
+      <p><span class="swatch" style="background:#1c5fb0"></span>Porsche Blue · Mid-engine coupe. The best all-rounder -- highest grip, sharpest turn-in.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== RACE RESULTS ===================== -->
+<div class="menuScreen hidden" id="screenResults">
+  <h2 id="resultsHeadline">RACE COMPLETE</h2>
+  <p class="subtag">FINAL STANDINGS</p>
+  <div id="resultsList"></div>
+  <div style="display:flex; gap:18px; margin-top:30px;">
+    <button class="startBtn" id="resultsRaceAgain" style="margin-bottom:0;">RACE AGAIN</button>
+    <button class="startBtn" id="resultsMainMenu" style="margin-bottom:0; background:linear-gradient(180deg, #3a4150, #262b35);">MAIN MENU</button>
   </div>
 </div>
 
@@ -450,6 +495,8 @@ let lapStartTime = 0;
 let bestLapTime = null;
 let raceStarted = false;
 let raceMode = false;       // true = Race, false = Free Roam
+let raceFinished = false;   // true once the player has crossed the line on lap 3
+let raceFinishOrder = [];   // ordered list of {label, place} as racers finish
 let currentMap = 'countryside';
 let currentCar = 'wrx';
 let scenery = [];
@@ -477,7 +524,9 @@ const carDefs = {
     reverseAccel: 9, drag: 0.992, turnRate: 2.6, grip: 0.86
   },
   impreza: {
-    maxSpeed: 54, boostMaxSpeed: 68, accel: 13, brakePower: 26,
+    // Set to an absurd 1000 km/h (~278 m/s) top speed on request -- everyday
+    // hatch on the outside, doesn't handle like it, just goes.
+    maxSpeed: 278, boostMaxSpeed: 320, accel: 13, brakePower: 26,
     reverseAccel: 8.5, drag: 0.99, turnRate: 3.0, grip: 0.8
   },
   murcielago: {
@@ -496,6 +545,13 @@ const carDefs = {
     // than the WRX -- it wants to step out under hard throttle.
     maxSpeed: 68, boostMaxSpeed: 86, accel: 18, brakePower: 28,
     reverseAccel: 8.5, drag: 0.993, turnRate: 2.3, grip: 0.76
+  },
+  porschecayman: {
+    // Mid-engine balance: the best all-rounder on the roster. Not the
+    // outright fastest, but the highest grip and sharpest turn-in -- it
+    // carries corner speed better than anything else here.
+    maxSpeed: 66, boostMaxSpeed: 84, accel: 17, brakePower: 32,
+    reverseAccel: 8.5, drag: 0.992, turnRate: 2.9, grip: 0.92
   }
 };
 
@@ -564,8 +620,18 @@ document.getElementById('carImpreza').addEventListener('click', () => { currentC
 document.getElementById('carMurcielago').addEventListener('click', () => { currentCar = 'murcielago'; launchGame(); });
 document.getElementById('carPicanto').addEventListener('click', () => { currentCar = 'picanto'; launchGame(); });
 document.getElementById('carHoldenSS').addEventListener('click', () => { currentCar = 'holdenss'; launchGame(); });
+document.getElementById('carPorscheCayman').addEventListener('click', () => { currentCar = 'porschecayman'; launchGame(); });
 
 document.getElementById('menuBtn').addEventListener('click', openMenuFromGame);
+
+document.getElementById('resultsRaceAgain').addEventListener('click', () => {
+  document.getElementById('screenResults').classList.add('hidden');
+  launchGame();
+});
+document.getElementById('resultsMainMenu').addEventListener('click', () => {
+  document.getElementById('screenResults').classList.add('hidden');
+  showScreen('main');
+});
 
 function openMenuFromGame(){
   gameRunning = false;
@@ -574,6 +640,7 @@ function openMenuFromGame(){
 
 function launchGame(){
   showScreen(null); // hides all menu screens, shows HUD
+  document.getElementById('screenResults').classList.add('hidden');
   document.getElementById('progressWrap').classList.toggle('active', raceMode);
   buildWorldForMap(currentMap);
   applyCarDef(currentCar);
@@ -600,6 +667,8 @@ function resetRaceState(){
   checkpointIndex = 0;
   lapCount = 0;
   bestLapTime = null;
+  raceFinished = false;
+  raceFinishOrder = [];
   document.getElementById('bestLapVal').textContent = '--:--.--';
   document.getElementById('progressFill').style.width = '0%';
 }
@@ -688,13 +757,13 @@ function buildWorldForMap(mapName){
     buildPortStructures();
     buildCheckpointsAlongRoad();
   } else if (mapName === 'beach'){
-    buildBeachTerrain();
     buildBeachRoadLoop();
+    buildBeachTerrain();
     buildBeachScenery();
     buildCheckpointsAlongRoad();
   } else {
-    buildCountrysideTerrain();
     buildCountrysideRoadLoop();
+    buildCountrysideTerrain();
     scatterGrassBlades();
     buildCountrysideScenery();
     buildCheckpointsAlongRoad();
@@ -872,8 +941,7 @@ function scatterGrassBlades(centerBias){
       const dist = Math.hypot(rp.x-x, rp.z-z);
       if (dist < 9) continue; // keep off the asphalt itself
     }
-    const y = terrainHeight(x,z);
-    dummy.position.set(x,y,z);
+    const y = terrainHeightNearRoad(x,z);
     dummy.rotation.y = Math.random()*Math.PI*2;
     const s = 0.7 + Math.random()*0.8;
     dummy.scale.set(s, s*(0.8+Math.random()*0.6), s);
@@ -885,6 +953,57 @@ function scatterGrassBlades(centerBias){
   scene.add(inst);
 }
 
+function distanceToRoadAndHeight(x, z){
+  // Nearest-point-on-segment lookup against the dense roadPoints array
+  // (already computed when the road loop was built), checking every
+  // consecutive pair as a line segment and interpolating height along
+  // whichever segment is closest -- rather than snapping to whichever
+  // single sample point happens to be nearest.
+  //
+  // The earlier version just took the y of the single nearest point. With
+  // ~12 units between consecutive road points, that meant the car's height
+  // held flat for that whole stretch and then jumped straight to the next
+  // point's height the instant a different point became "nearest" -- a
+  // visible staircase climbing a hill instead of a smooth slope. Projecting
+  // onto the segment and lerping between its two endpoints' heights by how
+  // far along it we are removes the steps entirely.
+  let best = Infinity, bestY = 0;
+  const n = roadPoints.length;
+  for (let i=0;i<n;i++){
+    const a = roadPoints[i];
+    const b = roadPoints[(i+1) % n];
+    const abx = b.x-a.x, abz = b.z-a.z;
+    const lenSq = abx*abx + abz*abz;
+    let t = lenSq > 0 ? ((x-a.x)*abx + (z-a.z)*abz) / lenSq : 0;
+    t = THREE.MathUtils.clamp(t, 0, 1);
+    const px = a.x + abx*t, pz = a.z + abz*t;
+    const dx = px-x, dz = pz-z;
+    const d = dx*dx + dz*dz;
+    if (d < best){
+      best = d;
+      bestY = a.y + (b.y - a.y) * t;
+    }
+  }
+  return { dist: Math.sqrt(best), y: bestY };
+}
+
+function terrainHeightNearRoad(x, z){
+  // Blend the raw procedural terrain height toward the road's own (now
+  // terrain-following) height as we approach the road, so the ground mesh
+  // and the road ribbon agree with each other directly underneath and
+  // beside the road -- this is what actually stops the car/road from
+  // clipping into or floating above the visible ground.
+  const raw = terrainHeight(x, z);
+  if (!roadPoints || roadPoints.length === 0) return raw;
+  const { dist, y } = distanceToRoadAndHeight(x, z);
+  const corridorHalfWidth = 9;   // matches road width + a little margin
+  const featherWidth = 10;       // distance over which it blends back to natural terrain
+  if (dist <= corridorHalfWidth) return y;
+  if (dist >= corridorHalfWidth + featherWidth) return raw;
+  const blend = (dist - corridorHalfWidth) / featherWidth;
+  return THREE.MathUtils.lerp(y, raw, blend);
+}
+
 function buildCountrysideTerrain(){
   const segs = 160;
   const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, segs, segs);
@@ -893,7 +1012,7 @@ function buildCountrysideTerrain(){
   for (let i=0;i<pos.count;i++){
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    pos.setY(i, terrainHeight(x,z));
+    pos.setY(i, terrainHeightNearRoad(x,z));
   }
   geo.computeVertexNormals();
 
@@ -911,7 +1030,7 @@ function buildCountrysideTerrain(){
     const m = new THREE.Mesh(pg, patchMat);
     const x = (Math.random()-0.5)*WORLD_SIZE*0.85;
     const z = (Math.random()-0.5)*WORLD_SIZE*0.85;
-    m.position.set(x, terrainHeight(x,z)+0.03, z);
+    m.position.set(x, terrainHeightNearRoad(x,z)+0.03, z);
     scene.add(m);
   }
 
@@ -1041,7 +1160,8 @@ function makeGravelTexture(){
 // ============================== COUNTRYSIDE ROAD LOOP ========================
 
 function buildCountrysideRoadLoop(){
-  const ctrl = [
+  // Coarse shape control points (just the path's x/z layout)
+  const ctrlXZ = [
     [   0,    0],
     [ 140,  -40],
     [ 260,   30],
@@ -1056,10 +1176,25 @@ function buildCountrysideRoadLoop(){
     [-120, -180],
     [  40, -140],
   ];
-  roadPoints = ctrl.map(p => {
-    const y = terrainHeight(p[0], p[1]);
-    return new THREE.Vector3(p[0], y, p[1]);
-  });
+
+  // Build a temporary XZ-only curve to sample many evenly-spaced points
+  // along the path, then resolve each one's height directly from
+  // terrainHeight(). Using ~12x more samples than the original 13 control
+  // points means the road's vertical profile actually tracks the real
+  // terrain's curvature between the original anchors, instead of smoothly
+  // (and incorrectly) interpolating straight-line height between two
+  // sparse, far-apart samples -- which is what let the road float above
+  // dips and let hills poke up through it.
+  const xzPoints = ctrlXZ.map(p => new THREE.Vector3(p[0], 0, p[1]));
+  const xzCurve = new THREE.CatmullRomCurve3(xzPoints, true, 'catmullrom', 0.4);
+  const denseCount = 160;
+  roadPoints = [];
+  for (let i=0;i<denseCount;i++){
+    const t = i/denseCount;
+    const p = xzCurve.getPointAt(t);
+    const y = terrainHeight(p.x, p.z);
+    roadPoints.push(new THREE.Vector3(p.x, y, p.z));
+  }
   roadCurve = new THREE.CatmullRomCurve3(roadPoints, true, 'catmullrom', 0.4);
 
   buildRoadRibbon(roadCurve, 11, true);
@@ -1107,10 +1242,10 @@ function buildRoadRibbon(curve, roadWidth, closed){
 
     const shL0 = left.clone();
     const shL1 = p.clone().addScaledVector(side, roadWidth/2 + shoulderWidth);
-    shL1.y = terrainHeight(shL1.x, shL1.z) + 0.05;
+    shL1.y = terrainHeightNearRoad(shL1.x, shL1.z) + 0.05;
     const shR0 = right.clone();
     const shR1 = p.clone().addScaledVector(side, -(roadWidth/2 + shoulderWidth));
-    shR1.y = terrainHeight(shR1.x, shR1.z) + 0.05;
+    shR1.y = terrainHeightNearRoad(shR1.x, shR1.z) + 0.05;
 
     shoulderPositions.push(shL0.x, shL0.y, shL0.z, shL1.x, shL1.y, shL1.z);
     shoulderPositions.push(shR0.x, shR0.y, shR0.z, shR1.x, shR1.y, shR1.z);
@@ -1340,16 +1475,17 @@ function buildCityBuildings(){
         scene.add(cap);
       }
 
-      scenery.push({ mesh, x: mesh.position.x, z: mesh.position.z, r: Math.max(w,d)/2 + 0.5 });
+      scenery.push({ mesh, x: mesh.position.x, z: mesh.position.z, halfW: w/2 + 0.4, halfD: d/2 + 0.4 });
     }
 
     // Street-level "podium" base for the block (covers podium between towers)
     const podiumMat = new THREE.MeshStandardMaterial({ color:0x4f545c, roughness:0.8 });
-    const podium = new THREE.Mesh(new THREE.BoxGeometry(block.size*0.9, 3, block.size*0.9), podiumMat);
+    const podiumSize = block.size*0.9;
+    const podium = new THREE.Mesh(new THREE.BoxGeometry(podiumSize, 3, podiumSize), podiumMat);
     podium.position.set(block.x, 1.5, block.z);
     podium.receiveShadow = true;
     scene.add(podium);
-    scenery.push({ mesh: podium, x: block.x, z: block.z, r: block.size*0.42 });
+    scenery.push({ mesh: podium, x: block.x, z: block.z, halfW: podiumSize/2, halfD: podiumSize/2 });
   });
 
   // Streetlights along the perimeter for atmosphere (decorative, non-colliding visually minor)
@@ -1466,7 +1602,7 @@ function buildPortStructures(){
           box.castShadow = true; box.receiveShadow = true;
           scene.add(box);
         }
-        scenery.push({ mesh:null, x:baseX, z:baseZ, r: Math.max(cw,cd)/2 + 0.6 });
+        scenery.push({ mesh:null, x:baseX, z:baseZ, halfW: cw/2 + 0.5, halfD: cd/2 + 0.5 });
       }
     } else if (roll < 0.75){
       // Warehouse building
@@ -1479,7 +1615,7 @@ function buildPortStructures(){
       const stripe = new THREE.Mesh(new THREE.BoxGeometry(w,0.4,1.2), new THREE.MeshStandardMaterial({color:0xc23b3b}));
       stripe.position.set(block.x, h+0.2, block.z);
       scene.add(stripe);
-      scenery.push({ mesh:wh, x:block.x, z:block.z, r:Math.max(w,d)/2 + 0.5 });
+      scenery.push({ mesh:wh, x:block.x, z:block.z, halfW: w/2 + 0.3, halfD: d/2 + 0.3 });
     } else {
       // Gantry crane straddling the block
       const legH = 22;
@@ -1547,7 +1683,7 @@ function buildBeachTerrain(){
   for (let i=0;i<pos.count;i++){
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    pos.setY(i, terrainHeight(x,z));
+    pos.setY(i, terrainHeightNearRoad(x,z));
   }
   geo.computeVertexNormals();
   const sandTex = makeSandTexture();
@@ -1574,7 +1710,7 @@ function buildBeachTerrain(){
 }
 
 function buildBeachRoadLoop(){
-  const ctrl = [
+  const ctrlXZ = [
     [   0, -260],
     [ 220, -220],
     [ 360,  -60],
@@ -1586,10 +1722,16 @@ function buildBeachRoadLoop(){
     [-360,  -60],
     [-220, -220],
   ];
-  roadPoints = ctrl.map(p => {
-    const y = terrainHeight(p[0], p[1]);
-    return new THREE.Vector3(p[0], y, p[1]);
-  });
+  const xzPoints = ctrlXZ.map(p => new THREE.Vector3(p[0], 0, p[1]));
+  const xzCurve = new THREE.CatmullRomCurve3(xzPoints, true, 'catmullrom', 0.4);
+  const denseCount = 120;
+  roadPoints = [];
+  for (let i=0;i<denseCount;i++){
+    const t = i/denseCount;
+    const p = xzCurve.getPointAt(t);
+    const y = terrainHeight(p.x, p.z);
+    roadPoints.push(new THREE.Vector3(p.x, y, p.z));
+  }
   roadCurve = new THREE.CatmullRomCurve3(roadPoints, true, 'catmullrom', 0.4);
   buildRoadRibbon(roadCurve, 11, true);
 }
@@ -1617,7 +1759,7 @@ function buildBeachScenery(){
       frond.castShadow = true;
       g.add(frond);
     }
-    const y = terrainHeight(x,z);
+    const y = terrainHeightNearRoad(x,z);
     g.position.set(x,y,z);
     g.rotation.y = Math.random()*Math.PI*2;
     scene.add(g);
@@ -1636,7 +1778,7 @@ function buildBeachScenery(){
     roof.position.y = 2.35;
     roof.rotation.y = Math.PI/4;
     g.add(roof);
-    const y = terrainHeight(x,z);
+    const y = terrainHeightNearRoad(x,z);
     g.position.set(x,y,z);
     g.rotation.y = Math.random()*Math.PI*2;
     scene.add(g);
@@ -1653,7 +1795,7 @@ function buildBeachScenery(){
     const canopy = new THREE.Mesh(new THREE.ConeGeometry(1.1,0.5,10), canopyMat);
     canopy.position.y = 1.85;
     g.add(canopy);
-    const y = terrainHeight(x,z);
+    const y = terrainHeightNearRoad(x,z);
     g.position.set(x,y,z);
     scene.add(g);
     scenery.push({mesh:g, x, z, r:0.5});
@@ -1723,9 +1865,11 @@ function checkCheckpointProgress(){
         bestLapTime = t;
         document.getElementById('bestLapVal').textContent = formatTime(t);
       }
-      if (lapCount >= 3){
+      if (lapCount >= 3 && !raceFinished){
+        raceFinished = true;
         showBanner('RACE COMPLETE', 'BEST LAP ' + formatTime(bestLapTime));
-      } else {
+        finishRaceAndShowResults();
+      } else if (!raceFinished){
         showBanner('LAP ' + (lapCount+1), 'KEEP PUSHING');
       }
     } else {
@@ -1742,7 +1886,91 @@ function formatTime(s){
   return (m>0?m+":":"") + (sec.padStart(5,'0'));
 }
 
-// ============================== COUNTRYSIDE SCENERY ===========================
+// ============================== RACE RESULTS ===================================
+
+function onRacerFinished(ai){
+  // Currently only used to mark the moment an AI car crosses the line on its
+  // final lap; actual placement is computed all at once in
+  // finishRaceAndShowResults() so ordering is consistent regardless of which
+  // car's update happens to run first within a frame.
+}
+
+function getCarDisplayName(carName){
+  const names = {
+    wrx: 'Subaru WRX tS', impreza: 'Subaru Impreza', murcielago: 'Murcielago GT Evo',
+    picanto: 'Kia Picanto', holdenss: 'Holden SS', porschecayman: 'Porsche 718 Cayman'
+  };
+  return names[carName] || carName;
+}
+
+function ordinal(n){
+  const s = ['th','st','nd','rd'], v = n % 100;
+  return n + (s[(v-20)%10] || s[v] || s[0]);
+}
+
+function finishRaceAndShowResults(){
+  // Rank every car (player + AI) by laps completed, then by progress within
+  // the current lap as a tiebreaker, then by finish time for anyone who has
+  // actually crossed the line. This lets the race conclude the moment the
+  // player finishes, while still producing a sensible full field result
+  // instead of forcing the player to wait for slow AI to finish.
+  const playerProgress = (lapCount % 3) + (checkpointIndex / Math.max(checkpoints.length,1));
+  const entries = [
+    {
+      isPlayer: true, carName: currentCar,
+      laps: lapCount, progress: playerProgress,
+      finished: true, finishTime: performance.now()
+    }
+  ];
+  aiCars.forEach(ai=>{
+    entries.push({
+      isPlayer: false, carName: ai.carName,
+      laps: ai.lapCount, progress: ai.lapCount + ai.t,
+      finished: ai.raceFinished, finishTime: ai.finishTime
+    });
+  });
+
+  entries.sort((a,b)=>{
+    // Finished racers always rank above unfinished ones.
+    if (a.finished !== b.finished) return a.finished ? -1 : 1;
+    if (a.finished && b.finished) return a.finishTime - b.finishTime;
+    return b.progress - a.progress;
+  });
+
+  showResultsScreen(entries);
+}
+
+function showResultsScreen(entries){
+  gameRunning = false;
+  const screen = document.getElementById('screenResults');
+  const list = document.getElementById('resultsList');
+  list.innerHTML = '';
+  entries.forEach((e, i)=>{
+    const place = i+1;
+    const row = document.createElement('div');
+    row.className = 'resultRow' + (e.isPlayer ? ' isPlayer' : '') + (place===1 ? ' isWinner' : '');
+    row.innerHTML = `
+      <div class="resultPlace">${ordinal(place)}</div>
+      <div class="resultInfo">
+        <div class="resultName">${getCarDisplayName(e.carName)}${e.isPlayer ? ' <span class="youTag">(You)</span>' : ''}</div>
+      </div>
+      <div class="resultStatus">${place===1 ? '🏆 WINNER' : (e.finished ? 'FINISHED' : 'DNF')}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  const playerPlace = entries.findIndex(e=>e.isPlayer) + 1;
+  const headline = document.getElementById('resultsHeadline');
+  if (playerPlace === 1){
+    headline.textContent = "YOU WON THE RACE!";
+  } else {
+    headline.textContent = `YOU FINISHED ${ordinal(playerPlace).toUpperCase()}`;
+  }
+
+  screen.classList.remove('hidden');
+}
+
+
 
 function closestPointOnRoad(x, z){
   let best = 1e9, bestT = 0;
@@ -1776,7 +2004,7 @@ function buildCountrysideScenery(){
       leaf.castShadow = true;
       g.add(leaf);
     }
-    const y = terrainHeight(x,z);
+    const y = terrainHeightNearRoad(x,z);
     g.position.set(x,y,z);
     g.scale.setScalar(0.9+Math.random()*0.6);
     g.rotation.y = Math.random()*Math.PI*2;
@@ -1789,7 +2017,7 @@ function buildCountrysideScenery(){
     const geo = new THREE.DodecahedronGeometry(s,0);
     const mat = new THREE.MeshStandardMaterial({ color:0x8b8b85, roughness:1 });
     const m = new THREE.Mesh(geo, mat);
-    const y = terrainHeight(x,z);
+    const y = terrainHeightNearRoad(x,z);
     m.position.set(x,y+s*0.3,z);
     m.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
     m.castShadow = true; m.receiveShadow = true;
@@ -1844,7 +2072,10 @@ function buildStartGate(){
 // carDefs stats so a Murcielago AI is genuinely fast and a Picanto AI is
 // genuinely slow -- this is a racing game, so traffic actually races.
 
-const AI_CAR_POOL = ['wrx', 'impreza', 'murcielago', 'picanto', 'holdenss'];
+const AI_CAR_POOL = ['wrx', 'impreza', 'murcielago', 'picanto', 'holdenss', 'porschecayman'];
+
+// Display names for the results screen - paired with AI_CAR_POOL/AI_PERSONALITIES by index.
+const AI_DRIVER_NAMES = ['Reece', 'Mika', 'Sofia', 'Dale', 'Priya', 'Tomo'];
 
 // Personalities now only affect HOW a car drives (how close to its own limit
 // it pushes, how much it weaves/cuts corners) rather than imposing a flat
@@ -1864,6 +2095,7 @@ function buildAIRacerModel(carName){
   else if (carName === 'murcielago') info = buildMurcielagoCar(group);
   else if (carName === 'picanto') info = buildPicantoCar(group);
   else if (carName === 'holdenss') info = buildHoldenSSCar(group);
+  else if (carName === 'porschecayman') info = buildPorscheCaymanCar(group);
   else info = buildWrxCar(group);
 
   const wheelY = info.lowRide ? 0.32 : (info.smallWheels ? 0.36 : 0.45);
@@ -1885,9 +2117,11 @@ function buildAITraffic(){
   const count = (currentMap === 'city' || currentMap === 'port') ? 5 : 6;
   const roadLen = currentMap === 'city' || currentMap === 'port' ? (CITY_GRID_N*CITY_BLOCK*4) : 1900;
   for (let i=0;i<count;i++){
-    // Slot 0 is reserved for the player (pole position), so AI cars fill
-    // slots 1..count in the staggered grid behind the line.
-    const slotIndex = i + 1;
+    // The player now always starts in last place (one row behind the back
+    // of the AI pack) so there's always a field to catch up through, so AI
+    // cars take the front slots 0..count-1 instead of leaving pole position
+    // empty for the player.
+    const slotIndex = i;
     const slot = getStartingGridSlot(slotIndex);
     const carName = AI_CAR_POOL[i % AI_CAR_POOL.length];
     const persona = AI_PERSONALITIES[i % AI_PERSONALITIES.length];
@@ -1914,12 +2148,23 @@ function buildAITraffic(){
       t: startT,
       // Start each AI's lane wander centered on its actual grid lane so it
       // eases out of formation rather than snapping sideways on the first
-      // update tick.
-      laneOffset: ((i % 2 === 0) ? -1 : 1) * GRID_LANE_OFFSET * 0.6,
+      // update tick. Derived the same way getStartingGridSlot assigns
+      // left/right (odd slotIndex = left) so this always matches where the
+      // car actually spawned, including the pole-position car (slotIndex 0,
+      // dead center, zero offset).
+      laneOffset: (slotIndex === 0 ? 0 : (slotIndex % 2 === 1 ? -1 : 1)) * GRID_LANE_OFFSET * 0.6,
       r: 1.5,
       spinOutTimer: 0,
       stunTimer: 0,
-      gridHoldTimer: 0.8 + Math.random()*0.4 // brief pause before peeling off the line
+      gridHoldTimer: 0.8 + Math.random()*0.4, // brief pause before peeling off the line
+      // Race placement tracking, mirrors the player's lapCount/checkpointIndex
+      // so AI cars can actually be ranked at the end of a race instead of
+      // just looping decoratively forever.
+      driverName: AI_DRIVER_NAMES[i % AI_DRIVER_NAMES.length],
+      lapCount: 0,
+      raceFinished: false,
+      finishTime: null,
+      prevT: startT
     });
   }
 }
@@ -1949,6 +2194,22 @@ function updateAITraffic(dt){
       // line -- exactly where it should be.
       ai.t = wrapT(ai.t);
 
+      // Lap/finish tracking for the results screen: a lap completes the
+      // instant t wraps from "near 1" back down past 0. Guard against the
+      // intentional small-negative starting offset wrapping to near-1 at
+      // spawn (that's a grid position, not a completed lap), by only
+      // counting the wrap once the car has actually been running forward
+      // for a moment.
+      if (raceMode && raceStarted && !ai.raceFinished && ai.settleElapsed > 1 && ai.t < ai.prevT - 0.5){
+        ai.lapCount++;
+        if (ai.lapCount >= 3){
+          ai.raceFinished = true;
+          ai.finishTime = performance.now();
+          onRacerFinished(ai);
+        }
+      }
+      ai.prevT = ai.t;
+
       // Race pace: each AI pushes toward a real fraction of its own car's
       // top speed (occasionally tipping into its boost range), modulated by
       // personality pace and a bit of per-lap variation so the pack doesn't
@@ -1957,7 +2218,9 @@ function updateAITraffic(dt){
       const paceTarget = ai.maxSpeed * (ai.persona.paceMul + variation);
       const ceiling = ai.boostMaxSpeed * 0.96;
       const targetSpeed = Math.min(paceTarget, ceiling);
-      ai.speed = THREE.MathUtils.lerp(ai.speed, Math.max(ai.maxSpeed*0.3, targetSpeed), 0.015);
+      ai.speed = ai.raceFinished
+        ? THREE.MathUtils.lerp(ai.speed, ai.maxSpeed*0.5, 0.02) // ease off after finishing
+        : THREE.MathUtils.lerp(ai.speed, Math.max(ai.maxSpeed*0.3, targetSpeed), 0.015);
 
       const p = roadCurve.getPointAt(wrapT(ai.t));
       const tan = roadCurve.getTangentAt(wrapT(Math.min(ai.t,0.9999))).normalize();
@@ -1971,8 +2234,47 @@ function updateAITraffic(dt){
       const targetLane = (ai.laneOffset < 0 ? -1 : 1) * THREE.MathUtils.lerp(GRID_LANE_OFFSET*0.6, ai.persona.laneOffsetRange*0.5, settleProgress);
       ai.laneOffset = THREE.MathUtils.lerp(ai.laneOffset, targetLane, 0.04);
       const offset = side.clone().multiplyScalar(ai.laneOffset + wander);
-      ai.pos.set(p.x+offset.x, p.y, p.z+offset.z);
-      ai.heading = Math.atan2(tan.x, tan.z);
+
+      // Where the car for that road point + lane offset; this is the point
+      // the AI is actually steering toward, not a position it teleports to.
+      const targetX = p.x + offset.x, targetZ = p.z + offset.z;
+
+      // Real turning: rotate the AI's heading toward the bearing to its
+      // target point, at a limited angular rate derived from its own car's
+      // turnRate stat (scaled by how fast it's going, like the player's
+      // own steering) -- instead of snapping heading directly to the road
+      // tangent every frame. A car driving in a straight line and a car
+      // mid-corner now both physically rotate into their new heading
+      // rather than the corner just resetting their facing instantly.
+      if (ai.heading === undefined || ai.prevPos === undefined){
+        ai.heading = Math.atan2(tan.x, tan.z);
+      }
+      const dx = targetX - ai.pos.x, dz = targetZ - ai.pos.z;
+      const desiredHeading = Math.atan2(dx, dz);
+      const def = carDefs[ai.carName] || { turnRate: 2.6 };
+      const speedFrac = THREE.MathUtils.clamp(ai.speed / Math.max(ai.maxSpeed, 1), 0.15, 1);
+      const maxTurnThisFrame = def.turnRate * (0.6 + speedFrac*0.9) * dt;
+      const headingDiff = shortestAngleDiff(ai.heading, desiredHeading);
+      const turnStep = THREE.MathUtils.clamp(headingDiff, -maxTurnThisFrame, maxTurnThisFrame);
+      ai.heading += turnStep;
+
+      // Move along the actual facing direction rather than snapping
+      // straight onto the road-curve point -- this is what makes the
+      // turning visible: the car's nose leads its position through a
+      // corner instead of the position and heading both being dictated
+      // independently by the curve sample.
+      const moveDir = new THREE.Vector3(Math.sin(ai.heading), 0, Math.cos(ai.heading));
+      const moveDist = ai.speed * dt;
+      ai.pos.x += moveDir.x * moveDist;
+      ai.pos.z += moveDir.z * moveDist;
+      ai.pos.y = p.y;
+
+      // Pull gently back toward the intended line so small heading lag
+      // through a sustained corner doesn't let the car drift away from the
+      // road over time -- this acts like a mild self-correction rather than
+      // a hard snap.
+      ai.pos.x = THREE.MathUtils.lerp(ai.pos.x, targetX, 0.04);
+      ai.pos.z = THREE.MathUtils.lerp(ai.pos.z, targetZ, 0.04);
     }
 
     ai.group.position.copy(ai.pos);
@@ -2017,22 +2319,57 @@ function resolveAICollisions(dt){
   });
 }
 
+function circleVsScenery(px, pz, playerRadius, s){
+  // Returns {hit, nx, nz, pushX, pushZ} describing the resolved pushout, or
+  // null if there's no overlap. Handles both circular colliders (s.r) and
+  // axis-aligned rectangular colliders (s.halfW/s.halfD) -- buildings,
+  // podiums, warehouses and containers are boxes in the actual scene, so
+  // approximating them with a single circular radius either leaves their
+  // corners uncovered or, worse, balloons an invisible hitbox out past
+  // their shorter sides. Using the real box shape fixes both.
+  if (s.halfW !== undefined){
+    // Closest point on the axis-aligned box to the car's position, then
+    // treat it like a circle-vs-point test against that closest point.
+    const closestX = THREE.MathUtils.clamp(px, s.x - s.halfW, s.x + s.halfW);
+    const closestZ = THREE.MathUtils.clamp(pz, s.z - s.halfD, s.z + s.halfD);
+    const dx = px - closestX, dz = pz - closestZ;
+    const dist = Math.hypot(dx, dz);
+    if (dist < playerRadius){
+      if (dist > 0.0001){
+        const nx = dx/dist, nz = dz/dist;
+        return { nx, nz, pushX: closestX + nx*playerRadius, pushZ: closestZ + nz*playerRadius };
+      } else {
+        // Car center is exactly on the box edge/corner (rare) - push along
+        // whichever axis has the smaller penetration to avoid a zero vector.
+        const nx = px >= s.x ? 1 : -1;
+        return { nx, nz: 0, pushX: s.x + nx*(s.halfW+playerRadius), pushZ: pz };
+      }
+    }
+    return null;
+  } else {
+    const dx = px - s.x, dz = pz - s.z;
+    const dist = Math.hypot(dx, dz);
+    const minDist = s.r + playerRadius;
+    if (dist < minDist && dist > 0.0001){
+      const nx = dx/dist, nz = dz/dist;
+      return { nx, nz, pushX: s.x + nx*minDist, pushZ: s.z + nz*minDist };
+    }
+    return null;
+  }
+}
+
 function resolveCollisions(prevPos){
   // Solid collision against scenery (trees, rocks, buildings/podiums): the
   // player cannot pass through these -- hard pushout plus a speed penalty
   // scaled by how directly the car was driving into the obstacle.
   scenery.forEach(s=>{
-    const dx = vehicle.pos.x - s.x;
-    const dz = vehicle.pos.z - s.z;
-    const dist = Math.hypot(dx,dz);
-    const minDist = s.r + 1.15;
-    if (dist < minDist && dist > 0.0001){
-      const nx = dx/dist, nz = dz/dist;
-      vehicle.pos.x = s.x + nx*minDist;
-      vehicle.pos.z = s.z + nz*minDist;
+    const hit = circleVsScenery(vehicle.pos.x, vehicle.pos.z, 1.15, s);
+    if (hit){
+      vehicle.pos.x = hit.pushX;
+      vehicle.pos.z = hit.pushZ;
       const speedAbs = Math.abs(vehicle.speed);
       if (speedAbs > 3){
-        triggerCrash(speedAbs, nx, nz, null);
+        triggerCrash(speedAbs, hit.nx, hit.nz, null);
       } else {
         vehicle.speed *= 0.3;
       }
@@ -2735,6 +3072,117 @@ function buildHoldenSSCar(group){
   return { wheelColor:0x4a4c50, caliperColor:0xc41e1e, frontZ:1.7, rearZ:-1.8, trackX:1.08 };
 }
 
+function buildPorscheCaymanCar(group){
+  // Porsche 718 Cayman: compact mid-engine coupe. Short front/rear overhangs,
+  // a smoothly rounded nose with slim headlights, fastback roofline, and the
+  // signature side air-intake scallop just ahead of the rear wheel. Built in
+  // a deep Porsche blue.
+  const bodyMat = new THREE.MeshStandardMaterial({ color:0x1c5fb0, metalness:0.45, roughness:0.18 });
+  const darkAccentMat = new THREE.MeshStandardMaterial({ color:0x14161a, metalness:0.5, roughness:0.35 });
+  const glassMat = new THREE.MeshStandardMaterial({ color:0x1b232c, metalness:0.4, roughness:0.08, transparent:true, opacity:0.82 });
+  const chromeMat = new THREE.MeshStandardMaterial({ color:0xdddddd, metalness:0.8, roughness:0.2 });
+
+  // Compact, low lower body - shorter overall length than the sedans
+  const lower = new THREE.Mesh(roundedBox(1.86, 0.46, 4.15, 0.26, 4), bodyMat);
+  lower.position.y = 0.4;
+  lower.castShadow = true;
+  group.add(lower);
+
+  // Short, smoothly rounded nose (mid-engine cars have very little front overhang)
+  const nose = new THREE.Mesh(roundedBox(1.74, 0.34, 1.1, 0.4, 5), bodyMat);
+  nose.position.set(0, 0.56, 1.78);
+  nose.castShadow = true;
+  group.add(nose);
+
+  // Cabin set well forward of center, fastback roofline tapering toward the rear
+  const cabin = new THREE.Mesh(roundedBox(1.62, 0.46, 1.7, 0.3, 5), bodyMat);
+  cabin.position.set(0, 0.92, 0.5);
+  cabin.castShadow = true;
+  group.add(cabin);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.4, 0.08), glassMat);
+  windshield.position.set(0, 0.96, 1.32);
+  windshield.rotation.x = -0.5;
+  group.add(windshield);
+
+  const sideGlassGeo = new THREE.BoxGeometry(0.05,0.28,1.3);
+  const sideGlassL = new THREE.Mesh(sideGlassGeo, glassMat);
+  sideGlassL.position.set(0.8, 0.98, 0.55);
+  group.add(sideGlassL);
+  const sideGlassR = sideGlassL.clone();
+  sideGlassR.position.x = -0.8;
+  group.add(sideGlassR);
+
+  // Long, steeply sloped fastback rear glass (mid-engine coupe signature)
+  const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 0.08), glassMat);
+  rearGlass.position.set(0, 0.84, -0.55);
+  rearGlass.rotation.x = 0.58;
+  group.add(rearGlass);
+
+  // Rear deck / engine cover, short and low
+  const deck = new THREE.Mesh(roundedBox(1.82, 0.3, 1.6, 0.3, 5), bodyMat);
+  deck.position.set(0, 0.58, -1.55);
+  deck.castShadow = true;
+  group.add(deck);
+
+  // Side air-intake scallop ahead of the rear wheel - the Cayman's defining
+  // side-profile detail
+  [-0.95, 0.95].forEach(x=>{
+    const scallop = new THREE.Mesh(roundedBox(0.1, 0.2, 0.7, 0.06, 3), darkAccentMat);
+    scallop.position.set(x, 0.46, -0.55);
+    group.add(scallop);
+  });
+
+  // Front bumper - smooth, simple, no aggressive vents
+  const bumper = new THREE.Mesh(roundedBox(1.88, 0.34, 0.35, 0.4, 5), bodyMat);
+  bumper.position.set(0, 0.34, 2.1);
+  group.add(bumper);
+
+  const lowerIntake = new THREE.Mesh(roundedBox(1.0,0.14,0.1,0.06,3), darkAccentMat);
+  lowerIntake.position.set(0, 0.26, 2.26);
+  group.add(lowerIntake);
+
+  // Rear bumper with full-width light bar and a subtle diffuser
+  const rearBumper = new THREE.Mesh(roundedBox(1.88, 0.32, 0.3, 0.35, 5), bodyMat);
+  rearBumper.position.set(0, 0.32, -2.25);
+  group.add(rearBumper);
+
+  const diffuser = new THREE.Mesh(new THREE.BoxGeometry(1.6,0.1,0.16), darkAccentMat);
+  diffuser.position.set(0, 0.18, -2.38);
+  group.add(diffuser);
+
+  // Centered dual exhaust (Porsche signature)
+  [-0.32, 0.32].forEach(x=>{
+    const ex = new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.085,0.18,12), chromeMat);
+    ex.rotation.x = Math.PI/2;
+    ex.position.set(x, 0.2, -2.42);
+    group.add(ex);
+  });
+
+  [-0.93, 0.93].forEach(x=>{
+    const mirror = new THREE.Mesh(roundedBox(0.09,0.1,0.2,0.03,2), darkAccentMat);
+    mirror.position.set(x, 0.94, 1.25);
+    group.add(mirror);
+  });
+
+  // Slim, wide headlights
+  const headlightMat = new THREE.MeshStandardMaterial({ color:0xeaf6ff, emissive:0xbfe8ff, emissiveIntensity:0.85 });
+  [-0.68,0.68].forEach(x=>{
+    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.14,10,8), headlightMat);
+    hl.scale.set(1.5,0.6,0.6);
+    hl.position.set(x,0.56,2.18);
+    group.add(hl);
+  });
+
+  // Full-width LED tail light bar (modern Porsche signature)
+  const tailMat = new THREE.MeshStandardMaterial({ color:0xff3030, emissive:0xff2020, emissiveIntensity:0.7 });
+  const tailBar = new THREE.Mesh(new THREE.BoxGeometry(1.7,0.08,0.06), tailMat);
+  tailBar.position.set(0, 0.62, -2.42);
+  group.add(tailBar);
+
+  return { wheelColor:0x3a3c40, caliperColor:0xc41e1e, frontZ:1.5, rearZ:-1.5, trackX:1.04 };
+}
+
 function makeWheel(wheelColor, caliperColor, sizeScale){
   const scale = sizeScale || 1;
   const tireMat = new THREE.MeshStandardMaterial({ color:0x0c0c0c, roughness:0.9 });
@@ -2777,6 +3225,7 @@ function rebuildCar(carName){
   else if (carName === 'murcielago') info = buildMurcielagoCar(carGroup);
   else if (carName === 'picanto') info = buildPicantoCar(carGroup);
   else if (carName === 'holdenss') info = buildHoldenSSCar(carGroup);
+  else if (carName === 'porschecayman') info = buildPorscheCaymanCar(carGroup);
   else info = buildWrxCar(carGroup);
 
   const wheelY = info.lowRide ? 0.32 : (info.smallWheels ? 0.36 : 0.45);
@@ -2845,7 +3294,10 @@ const GRID_ROW_SPACING = 6.5;   // distance behind the line per row
 const GRID_LANE_OFFSET = 3.0;   // distance left/right of the centerline
 
 function getStartingGridSlot(slotIndex){
-  // slotIndex 0 = pole position (player). 1,2,3... fill back in a 2-wide grid.
+  // Slot 0 is pole position (front, centered on the line); 1, 2, 3...
+  // fill back in a 2-wide grid. AI cars now occupy the front slots and the
+  // player always takes the very last slot -- see buildAITraffic and
+  // spawnPlayerOnRoad.
   const p0 = roadCurve.getPointAt(0);
   const tan0 = roadCurve.getTangentAt(0).normalize();
   const heading = Math.atan2(tan0.x, tan0.z);
@@ -2876,9 +3328,11 @@ function spawnPlayerOnRoad(isManualReset){
     pos = p;
     heading = Math.atan2(tan.x, tan.z);
   } else {
-    // Fresh launch: player always takes pole position (slot 0) on the
-    // starting grid, exactly on the line.
-    const slot = getStartingGridSlot(0);
+    // Fresh launch: player always starts in LAST place, one row behind the
+    // back of the AI pack, so every race begins with a full field to catch
+    // up through rather than starting out front.
+    const lastSlot = aiCars.length; // AI occupy slots 0..length-1, player takes the next one back
+    const slot = getStartingGridSlot(lastSlot);
     pos = slot.pos;
     heading = slot.heading;
   }
@@ -2913,6 +3367,14 @@ function getInput(){
 }
 
 function groundHeightAt(x,z){
+  // Use the same road-corridor-aware height the terrain mesh itself was
+  // built with, so the car's ground-following always matches what's
+  // actually visible underneath it -- this is what previously let the car
+  // sink into hills or hover over dips wherever the road's sparse height
+  // sampling disagreed with the finely-sampled ground mesh.
+  if (currentMap === 'countryside' || currentMap === 'beach'){
+    return terrainHeightNearRoad(x,z);
+  }
   return terrainHeight(x,z);
 }
 
@@ -3108,8 +3570,39 @@ function updateCamera(dt){
 
   const rotatedOffset = camOffset.clone();
   rotatedOffset.applyAxisAngle(new THREE.Vector3(0,1,0), vehicle.heading);
-  const desiredPos = vehicle.pos.clone().add(rotatedOffset);
-  desiredPos.y = Math.max(desiredPos.y, groundHeightAt(desiredPos.x, desiredPos.z)+1.2);
+
+  // Smooth the car's own height before building the camera's target height
+  // from it. The car itself snaps directly to ground height every frame
+  // (deliberately, so its wheels never visually clip into a slope), but
+  // that means vehicle.pos.y can carry small frame-to-frame steps on
+  // bumpy/sloped terrain -- fine for the car's own body, but the camera
+  // sits much further back/up on a fixed offset, so it was inheriting and
+  // amplifying every one of those steps as visible jitter. Tracking a
+  // separately-smoothed height for the camera's anchor point removes that
+  // without changing how the car itself sits on the road.
+  if (camera._smoothedCarY === undefined) camera._smoothedCarY = vehicle.pos.y;
+  camera._smoothedCarY = THREE.MathUtils.lerp(camera._smoothedCarY, vehicle.pos.y, 0.15);
+
+  const anchor = new THREE.Vector3(vehicle.pos.x, camera._smoothedCarY, vehicle.pos.z);
+  const desiredPos = anchor.add(rotatedOffset);
+
+  // The camera's height should ride off the car's own (already smoothly
+  // ground-following) height plus the offset, not a fresh terrain sample
+  // taken at the camera's trailing position. Sampling ground height out at
+  // the camera's spot every frame meant that on a slope, a few units of
+  // car movement could swing the clamp value up and down faster than the
+  // position lerp could smooth it out, because the floor the camera was
+  // clamped to and the offset height it wanted to be at kept trading places
+  // as the terrain curved underneath the trailing point -- that's what was
+  // showing up as jitter on elevation changes. Keeping the camera's target
+  // height anchored to the car removes that fight entirely.
+  // A terrain-clamp safety net still exists, but it's smoothed over time
+  // rather than snapping, so it only quietly prevents clipping in extreme
+  // cases instead of fighting the normal follow height every frame.
+  const rawFloor = groundHeightAt(desiredPos.x, desiredPos.z) + 1.0;
+  if (camera._groundFloor === undefined) camera._groundFloor = rawFloor;
+  camera._groundFloor = THREE.MathUtils.lerp(camera._groundFloor, rawFloor, 0.05);
+  desiredPos.y = Math.max(desiredPos.y, camera._groundFloor);
 
   camera.position.lerp(desiredPos, cameraMode===2 ? 0.4 : 0.12);
 
@@ -3121,7 +3614,13 @@ function updateCamera(dt){
     cameraShake = 0;
   }
 
-  const lookTarget = vehicle.pos.clone().add(lookOffset.clone().applyAxisAngle(new THREE.Vector3(0,1,0), vehicle.heading));
+  // Build the look target from the same smoothed height used for the
+  // camera's own position, not the car's raw snapped height -- lookAt()
+  // rotates the camera to face this point exactly, so any frame-to-frame
+  // vertical jump here shows up directly as the camera visibly nodding,
+  // independent of how smooth the camera's position itself is.
+  const lookAnchor = new THREE.Vector3(vehicle.pos.x, camera._smoothedCarY, vehicle.pos.z);
+  const lookTarget = lookAnchor.add(lookOffset.clone().applyAxisAngle(new THREE.Vector3(0,1,0), vehicle.heading));
   camera.lookAt(lookTarget);
 
   camera.fov = THREE.MathUtils.lerp(camera.fov, fovTarget, 0.08);
